@@ -9,23 +9,25 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     DEBUG: bool = True
 
-    # Paths
     STORAGE_PATH: str = str(BASE_DIR / "storage")
     TEMP_PATH: str = str(BASE_DIR / "temp")
     DB_PATH: str = str(BASE_DIR / "fs_lite.db")
 
-    # Chunking & Replication
-    CHUNK_SIZE_BYTES: int = 524288  # 512KB
+    CHUNK_SIZE_BYTES: int = 524288
     REPLICATION_FACTOR: int = 2
     NUM_NODES: int = 5
 
-    # Heartbeat
-    HEARTBEAT_INTERVAL: int = 5  # seconds
+    HEARTBEAT_INTERVAL: int = 5
+    INTEGRITY_CHECK_INTERVAL: int = 60
 
-    # LRU Cache
     CACHE_MAX_SIZE: int = 100
 
-    # CORS origins for frontend integration
+    # round_robin or least_loaded
+    DISTRIBUTION_STRATEGY: str = "round_robin"
+
+    # Compress file data with zlib before chunking
+    ENABLE_COMPRESSION: bool = True
+
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:4200"
 
     @property

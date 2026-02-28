@@ -10,14 +10,13 @@ from app.database import engine, Base, SessionLocal
 from app.api.v1 import files, nodes, system
 from app.services.node_service import initialize_nodes
 from app.services.heartbeat import heartbeat_loop
+from app.services.integrity_checker import integrity_check_loop
 
-# Create all DB tables
 Base.metadata.create_all(bind=engine)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     os.makedirs(settings.STORAGE_PATH, exist_ok=True)
     os.makedirs(settings.TEMP_PATH, exist_ok=True)
 
@@ -28,14 +27,17 @@ async def lifespan(app: FastAPI):
         db.close()
 
     heartbeat_task = asyncio.create_task(heartbeat_loop())
+    integrity_task = asyncio.create_task(integrity_check_loop())
+
     yield
 
-    # Shutdown
     heartbeat_task.cancel()
-    try:
-        await heartbeat_task
-    except asyncio.CancelledError:
-        pass
+    integrity_task.cancel()
+    for task in [heartbeat_task, integrity_task]:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(

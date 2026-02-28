@@ -36,8 +36,9 @@ def list_nodes(db: Session = Depends(get_db)):
 @router.post("/{node_id}/kill")
 def kill_node(node_id: str, hard: bool = False, db: Session = Depends(get_db)):
     """
-    Soft kill: marks node OFFLINE in DB (simulates connection timeout).
-    Hard kill: also renames the storage folder (simulates physical drive failure).
+    Soft kill: marks node OFFLINE in DB.
+    Hard kill (hard=true): also renames storage folder, simulating physical failure.
+    Triggers automatic rebalancing after kill.
     """
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:
@@ -61,10 +62,15 @@ def kill_node(node_id: str, hard: bool = False, db: Session = Depends(get_db)):
 
 @router.post("/{node_id}/recover")
 def recover_node(node_id: str, db: Session = Depends(get_db)):
-    """Brings a failed node back ONLINE and restores its folder if hard-killed."""
+    """Brings an OFFLINE node back ONLINE. Restores folder if it was hard-killed."""
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
+    if node.status not in ("OFFLINE", "DEGRADED"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Node is currently {node.status}. Use /activate to bring back from MAINTENANCE.",
+        )
 
     failed_path = node.storage_path + "_FAILED"
     if os.path.isdir(failed_path):
@@ -75,6 +81,50 @@ def recover_node(node_id: str, db: Session = Depends(get_db)):
     db.commit()
 
     return {"message": f"Node {node_id} is back ONLINE"}
+
+
+@router.post("/{node_id}/maintenance")
+def set_maintenance(node_id: str, db: Session = Depends(get_db)):
+    """
+    Sets an ONLINE node to MAINTENANCE mode.
+    MAINTENANCE nodes: no new chunks assigned, but existing chunks remain readable.
+    """
+    node = db.query(Node).filter(Node.id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    if node.status == "OFFLINE":
+        raise HTTPException(
+            status_code=400,
+            detail="Node is offline. Recover it first before setting maintenance.",
+        )
+    if node.status == "MAINTENANCE":
+        raise HTTPException(status_code=400, detail="Node is already in MAINTENANCE mode")
+
+    node.status = "MAINTENANCE"
+    db.commit()
+
+    return {
+        "message": f"Node {node_id} is now in MAINTENANCE mode",
+        "note": "No new chunks will be assigned. Existing chunks are still readable.",
+    }
+
+
+@router.post("/{node_id}/activate")
+def activate_node(node_id: str, db: Session = Depends(get_db)):
+    """Brings a MAINTENANCE node back to ONLINE."""
+    node = db.query(Node).filter(Node.id == node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    if node.status != "MAINTENANCE":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Node is not in MAINTENANCE mode (current: {node.status})",
+        )
+
+    node.status = "ONLINE"
+    db.commit()
+
+    return {"message": f"Node {node_id} is now ONLINE and accepting new chunks"}
 
 
 @router.get("/{node_id}/chunks")

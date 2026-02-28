@@ -1,13 +1,20 @@
 import os
+import zlib
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy.orm import Session
+
 from app.models.chunk import Chunk
 from app.models.node import Node
 from app.core.integrity import verify_chunk, read_chunk_data
 from app.core.cache import chunk_cache
 
 
-def reconstruct_file(file_id: str, db: Session) -> Optional[bytes]:
+def reconstruct_file(
+    file_id: str,
+    db: Session,
+    is_compressed: bool = False,
+) -> Optional[bytes]:
     primary_chunks = (
         db.query(Chunk)
         .filter(Chunk.file_id == file_id, Chunk.is_replica == 0)
@@ -18,46 +25,90 @@ def reconstruct_file(file_id: str, db: Session) -> Optional[bytes]:
     if not primary_chunks:
         return None
 
-    assembled = bytearray()
+    # Pre-load all data into plain dicts before threading (SA sessions are not thread-safe)
+    all_nodes = {n.id: n for n in db.query(Node).all()}
+    replica_map: dict = {}
+    for replica in (
+        db.query(Chunk)
+        .filter(Chunk.file_id == file_id, Chunk.is_replica == 1)
+        .all()
+    ):
+        replica_map.setdefault(replica.replica_of, []).append(replica)
+
+    fetch_infos = []
     for chunk in primary_chunks:
-        data = _fetch_chunk_with_fallback(chunk, db)
-        if data is None:
-            return None
-        assembled.extend(data)
+        primary_node = all_nodes.get(chunk.node_id)
+        replicas = replica_map.get(chunk.chunk_id, [])
 
-    return bytes(assembled)
+        replica_infos = []
+        for r in replicas:
+            rn = all_nodes.get(r.node_id)
+            if rn:
+                replica_infos.append({
+                    "chunk_id": r.chunk_id,
+                    "checksum": r.checksum,
+                    "node_status": rn.status,
+                    "node_path": rn.storage_path,
+                })
+
+        fetch_infos.append({
+            "chunk_id": chunk.chunk_id,
+            "chunk_index": chunk.chunk_index,
+            "checksum": chunk.checksum,
+            "primary_node_status": primary_node.status if primary_node else "OFFLINE",
+            "primary_node_path": primary_node.storage_path if primary_node else "",
+            "replicas": replica_infos,
+        })
+
+    # Fetch all chunks in parallel
+    results: dict = {}
+    with ThreadPoolExecutor(max_workers=min(len(fetch_infos), 8)) as executor:
+        future_to_index = {
+            executor.submit(_fetch_chunk_from_info, info): info["chunk_index"]
+            for info in fetch_infos
+        }
+        for future in as_completed(future_to_index):
+            index = future_to_index[future]
+            try:
+                data = future.result()
+            except Exception:
+                data = None
+            results[index] = data
+
+    if any(v is None for v in results.values()):
+        return None
+
+    assembled = bytearray()
+    for i in sorted(results.keys()):
+        assembled.extend(results[i])
+
+    raw = bytes(assembled)
+    return zlib.decompress(raw) if is_compressed else raw
 
 
-def _fetch_chunk_with_fallback(chunk: Chunk, db: Session) -> Optional[bytes]:
-    # 1. Check LRU cache
-    cached = chunk_cache.get(chunk.chunk_id)
+def _fetch_chunk_from_info(info: dict) -> Optional[bytes]:
+    # 1. LRU cache
+    cached = chunk_cache.get(info["chunk_id"])
     if cached is not None:
         return cached
 
-    # 2. Try primary node
-    node = db.query(Node).filter(Node.id == chunk.node_id).first()
-    if node and node.status == "ONLINE":
-        path = os.path.join(node.storage_path, chunk.chunk_id)
-        if verify_chunk(path, chunk.checksum):
+    # 2. Primary node (ONLINE or MAINTENANCE are both readable)
+    if info["primary_node_status"] in ("ONLINE", "MAINTENANCE"):
+        path = os.path.join(info["primary_node_path"], info["chunk_id"])
+        if verify_chunk(path, info["checksum"]):
             data = read_chunk_data(path)
             if data:
-                chunk_cache.put(chunk.chunk_id, data)
+                chunk_cache.put(info["chunk_id"], data)
                 return data
 
     # 3. Fallback to replicas
-    replicas = (
-        db.query(Chunk)
-        .filter(Chunk.replica_of == chunk.chunk_id, Chunk.is_replica == 1)
-        .all()
-    )
-    for replica in replicas:
-        replica_node = db.query(Node).filter(Node.id == replica.node_id).first()
-        if replica_node and replica_node.status == "ONLINE":
-            path = os.path.join(replica_node.storage_path, replica.chunk_id)
-            if verify_chunk(path, replica.checksum):
+    for replica in info["replicas"]:
+        if replica["node_status"] in ("ONLINE", "MAINTENANCE"):
+            path = os.path.join(replica["node_path"], replica["chunk_id"])
+            if verify_chunk(path, replica["checksum"]):
                 data = read_chunk_data(path)
                 if data:
-                    chunk_cache.put(chunk.chunk_id, data)
+                    chunk_cache.put(info["chunk_id"], data)
                     return data
 
     return None

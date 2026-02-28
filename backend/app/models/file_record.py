@@ -11,7 +11,8 @@ class FileRecord(Base):
     file_size = Column(BigInteger, nullable=False)
     total_chunks = Column(Integer, nullable=False)
     mime_type = Column(String, default="application/octet-stream")
-    checksum = Column(String, nullable=False)        # SHA-256 of full file
+    checksum = Column(String, nullable=False)
     version = Column(Integer, default=1)
-    status = Column(String, default="COMPLETE")      # UPLOADING, COMPLETE, DEGRADED
+    status = Column(String, default="COMPLETE")         # UPLOADING, COMPLETE, DEGRADED
+    is_compressed = Column(Integer, default=0)           # 0 = raw, 1 = zlib compressed
     created_at = Column(DateTime, server_default=func.now())
