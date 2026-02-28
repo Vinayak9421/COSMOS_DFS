@@ -22,11 +22,18 @@ class Settings(BaseSettings):
 
     CACHE_MAX_SIZE: int = 100
 
-    # round_robin or least_loaded
     DISTRIBUTION_STRATEGY: str = "round_robin"
-
-    # Compress file data with zlib before chunking
     ENABLE_COMPRESSION: bool = True
+
+    # JWT
+    JWT_SECRET_KEY: str = "cosmeon-fs-lite-super-secret-jwt-key-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
+
+    # Seeded admin credentials
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_EMAIL: str = "admin@cosmeon.space"
+    ADMIN_PASSWORD: str = "CosmeonAdmin2026!"
 
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:8080,http://localhost:4200"
 

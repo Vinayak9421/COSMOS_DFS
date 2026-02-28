@@ -6,12 +6,16 @@ from app.models.node import Node
 from app.models.file_record import FileRecord
 from app.models.chunk import Chunk
 from app.core.cache import chunk_cache
+from app.core.security import get_current_user, require_admin
 
 router = APIRouter(prefix="/system", tags=["System"])
 
 
 @router.get("/health")
-def health_check(db: Session = Depends(get_db)):
+def health_check(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),     # any logged-in user
+):
     nodes = db.query(Node).all()
     online = sum(1 for n in nodes if n.status == "ONLINE")
     offline = sum(1 for n in nodes if n.status == "OFFLINE")
@@ -27,7 +31,10 @@ def health_check(db: Session = Depends(get_db)):
 
 
 @router.get("/stats")
-def system_stats(db: Session = Depends(get_db)):
+def system_stats(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),     # any logged-in user
+):
     nodes = db.query(Node).all()
     total_used = sum(n.used_bytes or 0 for n in nodes)
     total_capacity = sum(n.capacity_bytes or 0 for n in nodes)
@@ -60,6 +67,6 @@ def system_stats(db: Session = Depends(get_db)):
 
 
 @router.delete("/cache/clear")
-def clear_cache():
+def clear_cache(current_user=Depends(require_admin)):   # admin only
     chunk_cache.clear()
     return {"message": "Cache cleared successfully"}

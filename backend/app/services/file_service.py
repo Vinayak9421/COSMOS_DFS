@@ -1,7 +1,6 @@
 import asyncio
 import os
 import uuid
-import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict
@@ -17,15 +16,11 @@ from app.core.reconstructor import reconstruct_file
 from app.core.cache import chunk_cache
 from app.config import settings
 
-# Protects only the DB metadata commit phase — disk writes stay fully parallel
 _metadata_lock = asyncio.Lock()
-
-# Thread pool for parallel disk I/O — 16 workers handles burst of concurrent uploads
 _io_executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="chunk_writer")
 
 
 def _write_chunk_to_disk(chunk_path: Path, data) -> None:
-    """Runs in thread pool. Accepts bytes or memoryview."""
     with open(chunk_path, "wb") as f:
         f.write(data)
 
@@ -34,10 +29,6 @@ async def _write_all_chunks_parallel(
     assignments: List[dict],
     node_map: Dict[str, Node],
 ) -> None:
-    """
-    Fires all chunk disk writes simultaneously via ThreadPoolExecutor.
-    DB is never touched here — pure I/O.
-    """
     loop = asyncio.get_running_loop()
     write_tasks = [
         loop.run_in_executor(
@@ -56,8 +47,8 @@ async def upload_file(
     original_name: str,
     mime_type: str,
     db: Session,
+    user_id: str,               # ← scopes this file to the uploading user
 ) -> dict:
-    # ── Phase 1: Pure computation, no lock, no DB ──────────────────────────
     original_checksum, chunks, is_compressed = chunk_file(file_data)
 
     nodes = get_online_nodes(db)
@@ -68,21 +59,20 @@ async def upload_file(
     assignments = distribute(chunks, nodes, replication_factor)
     node_map: Dict[str, Node] = {n.id: n for n in nodes}
 
-    # ── Phase 2: Parallel disk writes, no lock needed ──────────────────────
     await _write_all_chunks_parallel(assignments, node_map)
 
-    # ── Phase 3: Metadata commit, LOCKED ───────────────────────────────────
-    # Lock is acquired AFTER disk writes so multiple files write to disk simultaneously.
-    # Only the tiny DB commit phase is serialized.
     file_id: str = str(uuid.uuid4())
     version: int = 1
 
     async with _metadata_lock:
         try:
-            # Re-query version inside lock — prevents duplicate version race condition
+            # Version is scoped per-user per-filename — User A and User B each have their own v1
             latest = (
                 db.query(FileRecord)
-                .filter(FileRecord.original_name == original_name)
+                .filter(
+                    FileRecord.original_name == original_name,
+                    FileRecord.user_id == user_id,
+                )
                 .order_by(FileRecord.version.desc())
                 .first()
             )
@@ -90,6 +80,7 @@ async def upload_file(
 
             file_record = FileRecord(
                 file_id=file_id,
+                user_id=user_id,
                 original_name=original_name,
                 file_size=len(file_data),
                 total_chunks=len(chunks),
@@ -102,7 +93,6 @@ async def upload_file(
             db.add(file_record)
             db.flush()
 
-            # Single batched INSERT for all chunks — replaces N individual inserts
             chunk_mappings = [
                 {
                     "chunk_id": a["chunk_id"],
@@ -118,7 +108,6 @@ async def upload_file(
             ]
             db.execute(sa_insert(Chunk), chunk_mappings)
 
-            # Aggregate node stat updates — one query per node instead of per chunk
             size_per_node: Dict[str, int] = {}
             count_per_node: Dict[str, int] = {}
             for a in assignments:
@@ -136,7 +125,6 @@ async def upload_file(
 
         except Exception:
             db.rollback()
-            # Cleanup orphaned chunk files written to disk before DB failed
             for a in assignments:
                 node = node_map.get(a["node_id"])
                 if node:
@@ -235,21 +223,40 @@ def delete_file(file_id: str, db: Session) -> Optional[dict]:
     }
 
 
+def list_files_for_user(
+    db: Session,
+    user_id: Optional[str] = None,     # None = admin (all files)
+) -> List[FileRecord]:
+    query = db.query(FileRecord).order_by(FileRecord.created_at.desc())
+    if user_id:
+        query = query.filter(FileRecord.user_id == user_id)
+    return query.all()
+
+
 def get_file_record_by_name(
     filename: str,
     version: Optional[int],
     db: Session,
+    user_id: Optional[str] = None,     # None = admin (no user filter)
 ) -> Optional[FileRecord]:
     query = db.query(FileRecord).filter(FileRecord.original_name == filename)
+    if user_id:
+        query = query.filter(FileRecord.user_id == user_id)
     if version is not None:
         return query.filter(FileRecord.version == version).first()
     return query.order_by(FileRecord.version.desc()).first()
 
 
-def list_file_versions(filename: str, db: Session) -> List[FileRecord]:
-    return (
+def list_file_versions(
+    filename: str,
+    db: Session,
+    user_id: Optional[str] = None,     # None = admin (no user filter)
+) -> List[FileRecord]:
+    query = (
         db.query(FileRecord)
         .filter(FileRecord.original_name == filename)
         .order_by(FileRecord.version.asc())
-        .all()
     )
+    if user_id:
+        query = query.filter(FileRecord.user_id == user_id)
+    return query.all()

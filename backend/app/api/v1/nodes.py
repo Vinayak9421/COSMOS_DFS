@@ -6,12 +6,16 @@ from app.database import get_db
 from app.models.node import Node
 from app.models.chunk import Chunk
 from app.core.rebalancer import rebalance_node
+from app.core.security import get_current_user, require_admin
 
 router = APIRouter(prefix="/nodes", tags=["Nodes"])
 
 
 @router.get("/")
-def list_nodes(db: Session = Depends(get_db)):
+def list_nodes(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),     # any logged-in user can view
+):
     nodes = db.query(Node).all()
     return {
         "nodes": [
@@ -34,12 +38,12 @@ def list_nodes(db: Session = Depends(get_db)):
 
 
 @router.post("/{node_id}/kill")
-def kill_node(node_id: str, hard: bool = False, db: Session = Depends(get_db)):
-    """
-    Soft kill: marks node OFFLINE in DB.
-    Hard kill (hard=true): also renames storage folder, simulating physical failure.
-    Triggers automatic rebalancing after kill.
-    """
+def kill_node(
+    node_id: str,
+    hard: bool = False,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_admin),        # admin only
+):
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -61,8 +65,11 @@ def kill_node(node_id: str, hard: bool = False, db: Session = Depends(get_db)):
 
 
 @router.post("/{node_id}/recover")
-def recover_node(node_id: str, db: Session = Depends(get_db)):
-    """Brings an OFFLINE node back ONLINE. Restores folder if it was hard-killed."""
+def recover_node(
+    node_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_admin),        # admin only
+):
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -84,19 +91,16 @@ def recover_node(node_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{node_id}/maintenance")
-def set_maintenance(node_id: str, db: Session = Depends(get_db)):
-    """
-    Sets an ONLINE node to MAINTENANCE mode.
-    MAINTENANCE nodes: no new chunks assigned, but existing chunks remain readable.
-    """
+def set_maintenance(
+    node_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_admin),        # admin only
+):
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     if node.status == "OFFLINE":
-        raise HTTPException(
-            status_code=400,
-            detail="Node is offline. Recover it first before setting maintenance.",
-        )
+        raise HTTPException(status_code=400, detail="Node is offline. Recover it first before setting maintenance.")
     if node.status == "MAINTENANCE":
         raise HTTPException(status_code=400, detail="Node is already in MAINTENANCE mode")
 
@@ -110,8 +114,11 @@ def set_maintenance(node_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{node_id}/activate")
-def activate_node(node_id: str, db: Session = Depends(get_db)):
-    """Brings a MAINTENANCE node back to ONLINE."""
+def activate_node(
+    node_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_admin),        # admin only
+):
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -128,7 +135,11 @@ def activate_node(node_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{node_id}/chunks")
-def get_node_chunks(node_id: str, db: Session = Depends(get_db)):
+def get_node_chunks(
+    node_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),     # any logged-in user can view
+):
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")

@@ -9,52 +9,57 @@ from app.database import get_db
 from app.models.file_record import FileRecord
 from app.models.chunk import Chunk
 from app.models.node import Node
+from app.models.user import User
 from app.services.file_service import (
     upload_file,
     download_file,
     delete_file,
+    list_files_for_user,
     get_file_record_by_name,
     list_file_versions,
 )
 from app.core.integrity import verify_chunk
+from app.core.security import get_current_user
 
 router = APIRouter(prefix="/files", tags=["Files"])
+
+
+def _assert_ownership(record: FileRecord, current_user: User):
+    """
+    Raises HTTP 404 if a non-admin user tries to access another user's file.
+    404 is intentional — it doesn't reveal whether the file exists.
+    Admins bypass this check entirely.
+    """
+    if current_user.role != "admin" and record.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="File not found")
 
 
 @router.post("/upload")
 async def upload(
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """
-    Universal upload endpoint — handles single or multiple files identically.
-    Send 1 file or 20 files to the same endpoint with the same field name 'files'.
-    All files are processed concurrently. Metadata commits are serialized internally.
-    """
+    """Upload one or more files. All files are owned by the authenticated user."""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
-
     if len(files) > 20:
         raise HTTPException(status_code=400, detail="Maximum 20 files per request")
 
     async def process_one(file: UploadFile) -> dict:
         file_data = await file.read()
         mime_type = file.content_type or "application/octet-stream"
-        return await upload_file(file_data, file.filename, mime_type, db)
+        return await upload_file(file_data, file.filename, mime_type, db, current_user.id)
 
     results = await asyncio.gather(
         *[process_one(f) for f in files],
         return_exceptions=True,
     )
 
-    successes = []
-    failures = []
+    successes, failures = [], []
     for i, result in enumerate(results):
         if isinstance(result, Exception):
-            failures.append({
-                "filename": files[i].filename,
-                "error": str(result),
-            })
+            failures.append({"filename": files[i].filename, "error": str(result)})
         else:
             successes.append(result)
 
@@ -69,8 +74,16 @@ async def upload(
 
 
 @router.get("/list")
-def list_files(db: Session = Depends(get_db)):
-    files = db.query(FileRecord).order_by(FileRecord.created_at.desc()).all()
+def list_files(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Regular users see only their own files.
+    Admin sees all files across all users.
+    """
+    scoped_user_id = None if current_user.role == "admin" else current_user.id
+    files = list_files_for_user(db, user_id=scoped_user_id)
     return {
         "files": [
             {
@@ -82,6 +95,7 @@ def list_files(db: Session = Depends(get_db)):
                 "version": f.version,
                 "mime_type": f.mime_type,
                 "is_compressed": bool(f.is_compressed),
+                "owner_id": f.user_id,
                 "created_at": str(f.created_at),
             }
             for f in files
@@ -94,17 +108,17 @@ def download_by_name(
     filename: str,
     version: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """Download by original filename. Optional ?version= query param."""
-    record = get_file_record_by_name(filename, version, db)
+    scoped_user_id = None if current_user.role == "admin" else current_user.id
+    record = get_file_record_by_name(filename, version, db, user_id=scoped_user_id)
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
+
     result = download_file(record.file_id, db)
     if not result:
-        raise HTTPException(
-            status_code=503,
-            detail="File cannot be reconstructed — check node health",
-        )
+        raise HTTPException(status_code=503, detail="File cannot be reconstructed — check node health")
+
     file_data, original_name, mime_type = result
     return Response(
         content=file_data,
@@ -114,9 +128,13 @@ def download_by_name(
 
 
 @router.get("/versions/{filename}")
-def get_versions(filename: str, db: Session = Depends(get_db)):
-    """List all uploaded versions of a file by name."""
-    versions = list_file_versions(filename, db)
+def get_versions(
+    filename: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    scoped_user_id = None if current_user.role == "admin" else current_user.id
+    versions = list_file_versions(filename, db, user_id=scoped_user_id)
     if not versions:
         raise HTTPException(status_code=404, detail="No file found with that name")
     return {
@@ -138,13 +156,20 @@ def get_versions(filename: str, db: Session = Depends(get_db)):
 
 
 @router.get("/download/{file_id}")
-def download(file_id: str, db: Session = Depends(get_db)):
+def download(
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    record = db.query(FileRecord).filter(FileRecord.file_id == file_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    _assert_ownership(record, current_user)
+
     result = download_file(file_id, db)
     if not result:
-        raise HTTPException(
-            status_code=404,
-            detail="File not found or cannot be reconstructed — check node health",
-        )
+        raise HTTPException(status_code=404, detail="File cannot be reconstructed — check node health")
+
     file_data, original_name, mime_type = result
     return Response(
         content=file_data,
@@ -154,10 +179,15 @@ def download(file_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{file_id}/info")
-def file_info(file_id: str, db: Session = Depends(get_db)):
+def file_info(
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     record = db.query(FileRecord).filter(FileRecord.file_id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
+    _assert_ownership(record, current_user)
 
     chunks = (
         db.query(Chunk)
@@ -174,6 +204,7 @@ def file_info(file_id: str, db: Session = Depends(get_db)):
         "status": record.status,
         "version": record.version,
         "is_compressed": bool(record.is_compressed),
+        "owner_id": record.user_id,
         "created_at": str(record.created_at),
         "chunks": [
             {
@@ -191,10 +222,15 @@ def file_info(file_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{file_id}/verify")
-def verify_file_integrity(file_id: str, db: Session = Depends(get_db)):
+def verify_file_integrity(
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     record = db.query(FileRecord).filter(FileRecord.file_id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
+    _assert_ownership(record, current_user)
 
     chunks = db.query(Chunk).filter(Chunk.file_id == file_id).all()
     results = []
@@ -230,7 +266,16 @@ def verify_file_integrity(file_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/{file_id}")
-def delete_file_endpoint(file_id: str, db: Session = Depends(get_db)):
+def delete_file_endpoint(
+    file_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    record = db.query(FileRecord).filter(FileRecord.file_id == file_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    _assert_ownership(record, current_user)
+
     result = delete_file(file_id, db)
     if not result:
         raise HTTPException(status_code=404, detail="File not found")
