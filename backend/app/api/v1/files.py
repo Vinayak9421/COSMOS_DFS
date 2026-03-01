@@ -17,6 +17,7 @@ from app.services.file_service import (
     list_files_for_user,
     get_file_record_by_name,
     list_file_versions,
+    get_merkle_proof_for_chunk,      # ← new import
 )
 from app.core.integrity import verify_chunk
 from app.core.security import get_current_user
@@ -25,11 +26,6 @@ router = APIRouter(prefix="/files", tags=["Files"])
 
 
 def _assert_ownership(record: FileRecord, current_user: User):
-    """
-    Raises HTTP 404 if a non-admin user tries to access another user's file.
-    404 is intentional — it doesn't reveal whether the file exists.
-    Admins bypass this check entirely.
-    """
     if current_user.role != "admin" and record.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -40,7 +36,6 @@ async def upload(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Upload one or more files. All files are owned by the authenticated user."""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
     if len(files) > 20:
@@ -78,10 +73,6 @@ def list_files(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Regular users see only their own files.
-    Admin sees all files across all users.
-    """
     scoped_user_id = None if current_user.role == "admin" else current_user.id
     files = list_files_for_user(db, user_id=scoped_user_id)
     return {
@@ -95,6 +86,7 @@ def list_files(
                 "version": f.version,
                 "mime_type": f.mime_type,
                 "is_compressed": bool(f.is_compressed),
+                "merkle_root": f.merkle_root,
                 "owner_id": f.user_id,
                 "created_at": str(f.created_at),
             }
@@ -115,7 +107,11 @@ def download_by_name(
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
 
-    result = download_file(record.file_id, db)
+    try:
+        result = download_file(record.file_id, db)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
     if not result:
         raise HTTPException(status_code=503, detail="File cannot be reconstructed — check node health")
 
@@ -148,6 +144,7 @@ def get_versions(
                 "total_chunks": v.total_chunks,
                 "status": v.status,
                 "is_compressed": bool(v.is_compressed),
+                "merkle_root": v.merkle_root,
                 "created_at": str(v.created_at),
             }
             for v in versions
@@ -166,7 +163,12 @@ def download(
         raise HTTPException(status_code=404, detail="File not found")
     _assert_ownership(record, current_user)
 
-    result = download_file(file_id, db)
+    try:
+        result = download_file(file_id, db)
+    except ValueError as e:
+        # Merkle root mismatch — file is tampered/corrupted
+        raise HTTPException(status_code=409, detail=str(e))
+
     if not result:
         raise HTTPException(status_code=404, detail="File cannot be reconstructed — check node health")
 
@@ -201,6 +203,7 @@ def file_info(
         "file_size": record.file_size,
         "total_chunks": record.total_chunks,
         "checksum": record.checksum,
+        "merkle_root": record.merkle_root,
         "status": record.status,
         "version": record.version,
         "is_compressed": bool(record.is_compressed),
@@ -219,6 +222,48 @@ def file_info(
             for c in chunks
         ],
     }
+
+
+# ── NEW: Merkle Proof Endpoint ─────────────────────────────────────────────
+@router.get("/{file_id}/merkle-proof/{chunk_index}")
+def merkle_proof(
+    file_id: str,
+    chunk_index: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Returns a cryptographic Merkle proof for a specific chunk.
+
+    Proves that chunk_index is authentic and part of the original file
+    without needing to download any other chunk.
+
+    How to verify independently:
+      1. Start with chunk_hash
+      2. For each proof_step:
+         - If position="right": new_hash = SHA256(current + step.hash)
+         - If position="left":  new_hash = SHA256(step.hash + current)
+      3. Final result must equal merkle_root
+    """
+    record = db.query(FileRecord).filter(FileRecord.file_id == file_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    _assert_ownership(record, current_user)
+
+    if not record.merkle_root:
+        raise HTTPException(
+            status_code=404,
+            detail="No Merkle tree stored for this file (uploaded before this feature was added)",
+        )
+
+    proof = get_merkle_proof_for_chunk(file_id, chunk_index, db)
+    if not proof:
+        raise HTTPException(
+            status_code=404,
+            detail=f"chunk_index {chunk_index} does not exist in this file (total chunks: {record.total_chunks})",
+        )
+
+    return proof
 
 
 @router.post("/{file_id}/verify")
@@ -260,6 +305,7 @@ def verify_file_integrity(
     overall = all(r["status"] == "VALID" for r in results)
     return {
         "file_id": file_id,
+        "merkle_root": record.merkle_root,
         "overall_integrity": "PASS" if overall else "FAIL",
         "chunk_results": results,
     }

@@ -1,0 +1,392 @@
+/* ============================================================
+   styles.css — Cosmic hero overlay styles + Features section
+   ============================================================ */
+
+/* ---------- Google Font import ---------- */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700;900&display=swap');
+
+/* ---------- Reset & base ---------- */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden;
+  background: #050510;
+  font-family: 'Outfit', system-ui, sans-serif;
+  color: #e0e6f0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Home Navbar ---------- */
+.home-navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.6rem;
+  height: 54px;
+  background: rgba(10, 14, 30, 0.75);
+  border-bottom: 1px solid rgba(60, 120, 255, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.hero-cta--nav {
+  padding: 0.5rem 1.4rem;
+  font-size: 0.85rem;
+  pointer-events: auto;
+}
+
+/* ---------- Home page wrapper ---------- */
+.home-page {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  /* CSS animated starfield background — visible everywhere */
+  background:
+    radial-gradient(1px 1px at 10% 20%, rgba(255, 255, 255, 0.6), transparent),
+    radial-gradient(1px 1px at 25% 45%, rgba(255, 255, 255, 0.4), transparent),
+    radial-gradient(1px 1px at 40% 15%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1px 1px at 55% 65%, rgba(255, 255, 255, 0.3), transparent),
+    radial-gradient(1px 1px at 70% 30%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1px 1px at 85% 75%, rgba(255, 255, 255, 0.4), transparent),
+    radial-gradient(1px 1px at 15% 80%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(1px 1px at 50% 90%, rgba(255, 255, 255, 0.3), transparent),
+    radial-gradient(1px 1px at 90% 50%, rgba(255, 255, 255, 0.45), transparent),
+    radial-gradient(1px 1px at 30% 55%, rgba(255, 255, 255, 0.3), transparent),
+    radial-gradient(1.5px 1.5px at 5% 50%, rgba(180, 210, 255, 0.5), transparent),
+    radial-gradient(1.5px 1.5px at 60% 10%, rgba(180, 210, 255, 0.4), transparent),
+    radial-gradient(1.5px 1.5px at 75% 85%, rgba(180, 210, 255, 0.35), transparent),
+    radial-gradient(1.5px 1.5px at 95% 25%, rgba(180, 210, 255, 0.4), transparent),
+    radial-gradient(1px 1px at 20% 70%, rgba(255, 255, 255, 0.25), transparent),
+    radial-gradient(1px 1px at 65% 40%, rgba(255, 255, 255, 0.3), transparent),
+    radial-gradient(1px 1px at 35% 95%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(1px 1px at 80% 60%, rgba(255, 255, 255, 0.28), transparent),
+    radial-gradient(1px 1px at 45% 5%, rgba(255, 255, 255, 0.32), transparent),
+    radial-gradient(1px 1px at 12% 38%, rgba(255, 255, 255, 0.22), transparent);
+  background-size: 200px 200px;
+  background-color: #050510;
+  animation: starDrift 60s linear infinite;
+}
+
+@keyframes starDrift {
+  from {
+    background-position: 0 0;
+  }
+
+  to {
+    background-position: 200px 400px;
+  }
+}
+
+/* Scrollable content layer */
+.home-scroll {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+}
+
+/* ---------- Hero section ---------- */
+.hero-section {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* ---------- Hero overlay ---------- */
+.hero-overlay {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+  padding: 1.5rem;
+  animation: fadeInUp 1.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ---------- Heading ---------- */
+.hero-heading {
+  font-size: clamp(2.4rem, 6vw, 5.5rem);
+  font-weight: 900;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+  text-shadow: 0 0 40px rgba(60, 120, 255, 0.35);
+  margin-bottom: 1rem;
+}
+
+.accent {
+  background: linear-gradient(135deg, #4488ff 0%, #66ddff 50%, #aa88ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ---------- Tagline ---------- */
+.hero-tagline {
+  font-size: clamp(1rem, 2vw, 1.35rem);
+  font-weight: 300;
+  max-width: 520px;
+  color: rgba(200, 215, 240, 0.75);
+  margin-bottom: 2.5rem;
+  line-height: 1.6;
+}
+
+/* ---------- CTA button ---------- */
+.hero-cta {
+  pointer-events: auto;
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.05rem;
+  font-weight: 500;
+  padding: 0.85rem 2.6rem;
+  border: none;
+  border-radius: 100px;
+  cursor: pointer;
+  position: relative;
+  color: #ffffff;
+  background: linear-gradient(135deg, #2255cc, #4488ff);
+  box-shadow:
+    0 0 20px rgba(60, 120, 255, 0.3),
+    0 0 60px rgba(60, 120, 255, 0.12);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  letter-spacing: 0.04em;
+}
+
+.hero-cta:hover {
+  transform: translateY(-2px) scale(1.04);
+  box-shadow:
+    0 0 30px rgba(60, 120, 255, 0.5),
+    0 0 80px rgba(60, 120, 255, 0.2);
+}
+
+.hero-cta:active {
+  transform: scale(0.97);
+}
+
+/* Checkout variant — sits next to Launch Dashboard */
+.hero-cta--checkout {
+  background: rgba(60, 120, 255, 0.08);
+  border: 1px solid rgba(60, 120, 255, 0.25);
+  box-shadow: 0 0 20px rgba(60, 120, 255, 0.08);
+  margin-left: 0.6rem;
+}
+
+.hero-cta--checkout:hover {
+  background: rgba(60, 120, 255, 0.18);
+  border-color: rgba(100, 160, 255, 0.4);
+  box-shadow: 0 0 30px rgba(60, 120, 255, 0.2);
+}
+
+/* Hero buttons row */
+.hero-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* ---------- Scroll hint ---------- */
+.scroll-hint {
+  position: absolute;
+  bottom: 2.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  animation: fadeInUp 2s 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.scroll-arrow {
+  font-size: 1.4rem;
+  color: rgba(100, 160, 255, 0.5);
+  animation: bounceDown 2s ease-in-out infinite;
+}
+
+.scroll-text {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: rgba(100, 160, 255, 0.35);
+}
+
+@keyframes bounceDown {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(8px);
+  }
+}
+
+/* ---------- Fade-in animation ---------- */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================================
+   Features Section
+   ============================================================ */
+
+.features-section {
+  position: relative;
+  width: 100%;
+  padding: 6rem 2rem 5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Transparent — lets the fixed 3D space canvas show through */
+  background: transparent;
+}
+
+.features-heading {
+  font-size: clamp(1.8rem, 4vw, 3rem);
+  font-weight: 900;
+  text-align: center;
+  color: #ffffff;
+  text-shadow: 0 0 30px rgba(60, 120, 255, 0.25);
+  margin-bottom: 0.8rem;
+  animation: fadeInUp 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.features-subtitle {
+  font-size: clamp(0.9rem, 1.5vw, 1.1rem);
+  font-weight: 300;
+  color: rgba(180, 200, 230, 0.6);
+  text-align: center;
+  max-width: 560px;
+  line-height: 1.7;
+  margin-bottom: 3.5rem;
+}
+
+/* ---------- Features grid ---------- */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  width: 100%;
+  max-width: 1100px;
+}
+
+/* ---------- Feature card ---------- */
+.feature-card {
+  background: rgba(12, 16, 36, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(60, 120, 255, 0.1);
+  border-radius: 16px;
+  padding: 2rem 1.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  transition: all 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: cardFadeIn 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  box-shadow:
+    0 0 20px rgba(60, 120, 255, 0.04),
+    inset 0 0 30px rgba(60, 120, 255, 0.02);
+}
+
+.feature-card:hover {
+  transform: translateY(-6px) scale(1.02);
+  border-color: rgba(60, 140, 255, 0.25);
+  box-shadow:
+    0 0 30px rgba(60, 120, 255, 0.12),
+    0 8px 32px rgba(0, 0, 0, 0.3),
+    inset 0 0 40px rgba(60, 120, 255, 0.04);
+}
+
+@keyframes cardFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.feature-icon {
+  font-size: 2rem;
+  margin-bottom: 0.2rem;
+  filter: drop-shadow(0 0 8px rgba(100, 160, 255, 0.3));
+}
+
+.feature-title {
+  font-size: 1.08rem;
+  font-weight: 700;
+  color: #e0eaff;
+  letter-spacing: 0.01em;
+}
+
+.feature-desc {
+  font-size: 0.88rem;
+  font-weight: 300;
+  color: rgba(180, 200, 230, 0.65);
+  line-height: 1.6;
+}
+
+/* ---------- Responsive adjustments ---------- */
+@media (max-width: 768px) {
+  .features-section {
+    padding: 4rem 1.2rem 3.5rem;
+  }
+
+  .features-grid {
+    grid-template-columns: 1fr;
+    gap: 1.2rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero-overlay {
+    padding: 1rem;
+  }
+
+  .hero-cta {
+    padding: 0.75rem 2rem;
+    font-size: 0.95rem;
+  }
+
+  .features-section {
+    padding: 3rem 1rem 2.5rem;
+  }
+
+  .feature-card {
+    padding: 1.5rem 1.2rem;
+  }
+}

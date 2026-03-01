@@ -14,6 +14,7 @@ from app.core.chunker import chunk_file
 from app.core.distributor import get_online_nodes, distribute
 from app.core.reconstructor import reconstruct_file
 from app.core.cache import chunk_cache
+from app.core.merkle import compute_merkle_root, verify_proof, generate_proof
 from app.config import settings
 
 _metadata_lock = asyncio.Lock()
@@ -47,9 +48,19 @@ async def upload_file(
     original_name: str,
     mime_type: str,
     db: Session,
-    user_id: str,               # ← scopes this file to the uploading user
+    user_id: str,
 ) -> dict:
+    # ── Phase 1: Chunk + compute Merkle root ──────────────────────────────
     original_checksum, chunks, is_compressed = chunk_file(file_data)
+
+    # Build Merkle root from primary chunk hashes, ordered by chunk_index
+    # Replicas share the same hash as their primary, so only unique indices needed
+    unique_chunks_sorted = sorted(
+        {c["chunk_index"]: c for c in chunks}.values(),
+        key=lambda c: c["chunk_index"],
+    )
+    leaf_hashes = [c["checksum"] for c in unique_chunks_sorted]
+    merkle_root = compute_merkle_root(leaf_hashes)
 
     nodes = get_online_nodes(db)
     if not nodes:
@@ -59,14 +70,15 @@ async def upload_file(
     assignments = distribute(chunks, nodes, replication_factor)
     node_map: Dict[str, Node] = {n.id: n for n in nodes}
 
+    # ── Phase 2: Parallel disk writes ──────────────────────────────────────
     await _write_all_chunks_parallel(assignments, node_map)
 
+    # ── Phase 3: Metadata commit (locked) ─────────────────────────────────
     file_id: str = str(uuid.uuid4())
     version: int = 1
 
     async with _metadata_lock:
         try:
-            # Version is scoped per-user per-filename — User A and User B each have their own v1
             latest = (
                 db.query(FileRecord)
                 .filter(
@@ -83,9 +95,10 @@ async def upload_file(
                 user_id=user_id,
                 original_name=original_name,
                 file_size=len(file_data),
-                total_chunks=len(chunks),
+                total_chunks=len(unique_chunks_sorted),
                 mime_type=mime_type,
                 checksum=original_checksum,
+                merkle_root=merkle_root,
                 version=version,
                 status="UPLOADING",
                 is_compressed=1 if is_compressed else 0,
@@ -138,9 +151,10 @@ async def upload_file(
         "file_id": file_id,
         "original_name": original_name,
         "file_size": len(file_data),
-        "total_chunks": len(chunks),
+        "total_chunks": len(unique_chunks_sorted),
         "replication_factor": replication_factor,
         "checksum": original_checksum,
+        "merkle_root": merkle_root,
         "version": version,
         "is_compressed": is_compressed,
         "distribution_strategy": settings.DISTRIBUTION_STRATEGY,
@@ -161,7 +175,75 @@ def download_file(
     if file_data is None:
         return None
 
+    # ── Merkle integrity check on every download ──────────────────────────
+    # Recompute root from primary (non-replica) chunk checksums stored in DB
+    # and compare against the root stored at upload time.
+    # If even one chunk was tampered with or swapped, the root will not match.
+    if record.merkle_root:
+        primary_chunks = (
+            db.query(Chunk)
+            .filter(Chunk.file_id == file_id, Chunk.is_replica == False)
+            .order_by(Chunk.chunk_index)
+            .all()
+        )
+        live_leaf_hashes = [c.checksum for c in primary_chunks]
+        live_root = compute_merkle_root(live_leaf_hashes)
+
+        if live_root != record.merkle_root:
+            raise ValueError(
+                f"Merkle root mismatch — file '{record.original_name}' "
+                f"has been tampered with. Expected: {record.merkle_root[:16]}... "
+                f"Got: {live_root[:16]}..."
+            )
+
     return file_data, record.original_name, record.mime_type
+
+
+def get_merkle_proof_for_chunk(
+    file_id: str,
+    chunk_index: int,
+    db: Session,
+) -> Optional[dict]:
+    """
+    Returns the Merkle proof for a specific chunk_index within a file.
+    Allows a client to verify a single chunk's authenticity without
+    downloading the entire file.
+    """
+    record = db.query(FileRecord).filter(FileRecord.file_id == file_id).first()
+    if not record or not record.merkle_root:
+        return None
+
+    primary_chunks = (
+        db.query(Chunk)
+        .filter(Chunk.file_id == file_id, Chunk.is_replica == False)
+        .order_by(Chunk.chunk_index)
+        .all()
+    )
+
+    if chunk_index >= len(primary_chunks):
+        return None
+
+    leaf_hashes = [c.checksum for c in primary_chunks]
+    proof_steps = generate_proof(leaf_hashes, chunk_index)
+
+    # Self-verify the proof before returning it
+    target_hash = leaf_hashes[chunk_index]
+    is_valid = verify_proof(target_hash, proof_steps, record.merkle_root)
+
+    return {
+        "file_id": file_id,
+        "chunk_index": chunk_index,
+        "chunk_hash": target_hash,
+        "merkle_root": record.merkle_root,
+        "total_chunks": len(primary_chunks),
+        "proof_steps": proof_steps,
+        "proof_valid": is_valid,
+        "how_to_verify": (
+            "Start with chunk_hash. For each step: if position='right', "
+            "SHA256(current + step.hash). If position='left', SHA256(step.hash + current). "
+            "Final result must equal merkle_root."
+        ),
+    }
 
 
 def delete_file(file_id: str, db: Session) -> Optional[dict]:
@@ -225,7 +307,7 @@ def delete_file(file_id: str, db: Session) -> Optional[dict]:
 
 def list_files_for_user(
     db: Session,
-    user_id: Optional[str] = None,     # None = admin (all files)
+    user_id: Optional[str] = None,
 ) -> List[FileRecord]:
     query = db.query(FileRecord).order_by(FileRecord.created_at.desc())
     if user_id:
@@ -237,7 +319,7 @@ def get_file_record_by_name(
     filename: str,
     version: Optional[int],
     db: Session,
-    user_id: Optional[str] = None,     # None = admin (no user filter)
+    user_id: Optional[str] = None,
 ) -> Optional[FileRecord]:
     query = db.query(FileRecord).filter(FileRecord.original_name == filename)
     if user_id:
@@ -250,7 +332,7 @@ def get_file_record_by_name(
 def list_file_versions(
     filename: str,
     db: Session,
-    user_id: Optional[str] = None,     # None = admin (no user filter)
+    user_id: Optional[str] = None,
 ) -> List[FileRecord]:
     query = (
         db.query(FileRecord)

@@ -1,16 +1,57 @@
 import os
 import shutil
 import uuid
+from typing import List, Optional, Set
 from sqlalchemy.orm import Session
 from app.models.chunk import Chunk
 from app.models.node import Node
 
 
+def _ring_distance(idx_a: int, idx_b: int, num_nodes: int) -> int:
+    diff = abs(idx_a - idx_b)
+    return min(diff, num_nodes - diff)
+
+
+def _pick_separated_target(
+    primary_node_id: str,
+    online_nodes: List[Node],
+    exclude_node_ids: Set[str],
+) -> Optional[Node]:
+    """
+    Picks the best target node for a new replica after rebalancing.
+    Maximises ring distance from the primary — same philosophy as distributor.
+    Falls back to the furthest available node if separation can't be fully met.
+
+    exclude_node_ids: nodes already holding this chunk (primary + existing replicas).
+    """
+    num_nodes = len(online_nodes)
+    if num_nodes == 0:
+        return None
+
+    min_separation = max(1, num_nodes // 2)
+    node_ring = {n.id: idx for idx, n in enumerate(online_nodes)}
+    primary_idx = node_ring.get(primary_node_id, 0)
+
+    candidates = [n for n in online_nodes if n.id not in exclude_node_ids]
+    if not candidates:
+        return None
+
+    # Prefer nodes that meet full min_separation
+    well_separated = [
+        n for n in candidates
+        if _ring_distance(node_ring[n.id], primary_idx, num_nodes) >= min_separation
+    ]
+
+    pool = well_separated if well_separated else candidates
+    # Among valid candidates, pick the one with the most ring distance from primary
+    return max(pool, key=lambda n: _ring_distance(node_ring[n.id], primary_idx, num_nodes))
+
+
 def rebalance_node(failed_node_id: str, db: Session) -> dict:
     """
     Called when a node goes OFFLINE.
-    - Primary chunks: promote a replica to primary, then create a new replica elsewhere.
-    - Replica chunks: re-create the replica on another healthy node from the primary.
+    - Primary chunks: promote a replica to primary, create new replica with separation.
+    - Replica chunks: re-create the replica on a well-separated node from the primary.
     """
     online_nodes = (
         db.query(Node)
@@ -23,11 +64,10 @@ def rebalance_node(failed_node_id: str, db: Session) -> dict:
 
     failed_chunks = db.query(Chunk).filter(Chunk.node_id == failed_node_id).all()
     rebalanced, lost = 0, 0
-    cycle = 0
 
     for chunk in failed_chunks:
         if chunk.is_replica == 0:
-            # PRIMARY chunk lost — promote a replica
+            # ── PRIMARY lost: promote a replica, then create new replica ──
             replica = (
                 db.query(Chunk)
                 .join(Node, Chunk.node_id == Node.id)
@@ -40,19 +80,20 @@ def rebalance_node(failed_node_id: str, db: Session) -> dict:
             )
 
             if replica:
+                promoted_node_id = replica.node_id
+
                 # Promote replica → primary
                 replica.is_replica = 0
                 replica.replica_of = None
-                chunk.node_id = replica.node_id
-                chunk.chunk_id = replica.chunk_id
-                db.delete(replica)
+                db.delete(chunk)
 
-                # Create a new replica on a different healthy node
-                other_nodes = [n for n in online_nodes if n.id != replica.node_id]
-                if other_nodes:
-                    target = other_nodes[cycle % len(other_nodes)]
-                    cycle += 1
-                    _copy_chunk_to_node(chunk, target, db)
+                # All nodes already holding this chunk
+                exclude = {failed_node_id, promoted_node_id}
+
+                # Create new replica on a well-separated node
+                target = _pick_separated_target(promoted_node_id, online_nodes, exclude)
+                if target:
+                    _copy_chunk_to_node(replica, target, db, replica_of=replica.chunk_id)
 
                 rebalanced += 1
             else:
@@ -60,7 +101,7 @@ def rebalance_node(failed_node_id: str, db: Session) -> dict:
                 lost += 1
 
         else:
-            # REPLICA chunk lost — re-create from primary
+            # ── REPLICA lost: re-create it from primary ──
             primary = (
                 db.query(Chunk)
                 .join(Node, Chunk.node_id == Node.id)
@@ -73,10 +114,20 @@ def rebalance_node(failed_node_id: str, db: Session) -> dict:
             )
 
             if primary:
-                other_nodes = [n for n in online_nodes if n.id != primary.node_id]
-                if other_nodes:
-                    target = other_nodes[cycle % len(other_nodes)]
-                    cycle += 1
+                # Exclude: failed node, primary node, any other existing replica node
+                existing_replicas = (
+                    db.query(Chunk)
+                    .filter(
+                        Chunk.replica_of == primary.chunk_id,
+                        Chunk.is_replica == 1,
+                        Chunk.chunk_id != chunk.chunk_id,
+                    )
+                    .all()
+                )
+                exclude = {failed_node_id, primary.node_id} | {r.node_id for r in existing_replicas}
+
+                target = _pick_separated_target(primary.node_id, online_nodes, exclude)
+                if target:
                     _copy_chunk_to_node(primary, target, db, replica_of=primary.chunk_id)
 
             db.delete(chunk)
@@ -103,7 +154,7 @@ def _copy_chunk_to_node(
     dst_path = os.path.join(target_node.storage_path, new_chunk_id)
     shutil.copy2(src_path, dst_path)
 
-    new_chunk = Chunk(
+    db.add(Chunk(
         chunk_id=new_chunk_id,
         file_id=source_chunk.file_id,
         chunk_index=source_chunk.chunk_index,
@@ -112,7 +163,6 @@ def _copy_chunk_to_node(
         size_bytes=source_chunk.size_bytes,
         is_replica=1,
         replica_of=replica_of or source_chunk.chunk_id,
-    )
-    db.add(new_chunk)
+    ))
     target_node.used_bytes = (target_node.used_bytes or 0) + source_chunk.size_bytes
     target_node.chunk_count = (target_node.chunk_count or 0) + 1
