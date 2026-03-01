@@ -42,8 +42,19 @@ def kill_node(
     node_id: str,
     hard: bool = False,
     db: Session = Depends(get_db),
-    current_user=Depends(require_admin),        # admin only
+    current_user=Depends(require_admin),
 ):
+    """
+    Soft kill (hard=false — default):
+      Node marked OFFLINE. Physical files stay on disk.
+      Chunk metadata is fully preserved in DB.
+      Files are instantly recoverable when node comes back online via /recover.
+
+    Hard kill (hard=true):
+      Node marked OFFLINE. Storage folder is physically renamed/destroyed.
+      Chunk metadata is migrated to surviving nodes.
+      Use /recover to bring node back (folder is restored).
+    """
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
@@ -56,7 +67,8 @@ def kill_node(
     if hard and os.path.isdir(node.storage_path):
         os.rename(node.storage_path, node.storage_path + "_FAILED")
 
-    rebalance_result = rebalance_node(node_id, db)
+    # Pass hard flag — soft kill preserves metadata, hard kill migrates it
+    rebalance_result = rebalance_node(node_id, db, hard=hard)
 
     return {
         "message": f"Node {node_id} killed ({'hard' if hard else 'soft'})",

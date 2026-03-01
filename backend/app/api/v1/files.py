@@ -17,7 +17,7 @@ from app.services.file_service import (
     list_files_for_user,
     get_file_record_by_name,
     list_file_versions,
-    get_merkle_proof_for_chunk,      # ← new import
+    get_merkle_proof_for_chunk,
 )
 from app.core.integrity import verify_chunk
 from app.core.security import get_current_user
@@ -26,6 +26,21 @@ router = APIRouter(prefix="/files", tags=["Files"])
 
 
 def _assert_ownership(record: FileRecord, current_user: User):
+    """
+    CONTENT access guard — download, delete, by-name download.
+    Applies to EVERYONE including admin.
+    Nobody can access another user's file bytes.
+    """
+    if record.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="File not found")
+
+
+def _assert_read_access(record: FileRecord, current_user: User):
+    """
+    METADATA access guard — info, verify, merkle-proof.
+    Admin can view metadata of all files for monitoring/auditing.
+    Regular users see only their own.
+    """
     if current_user.role != "admin" and record.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="File not found")
 
@@ -73,6 +88,10 @@ def list_files(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    Regular user → own files only.
+    Admin → all users' files (metadata only, no content).
+    """
     scoped_user_id = None if current_user.role == "admin" else current_user.id
     files = list_files_for_user(db, user_id=scoped_user_id)
     return {
@@ -102,10 +121,17 @@ def download_by_name(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    scoped_user_id = None if current_user.role == "admin" else current_user.id
-    record = get_file_record_by_name(filename, version, db, user_id=scoped_user_id)
+    """
+    Download by filename — always scoped to current user's own files.
+    Admin cannot use this endpoint to download another user's file.
+    """
+    # Always scope by current_user.id — no admin bypass for content endpoints
+    record = get_file_record_by_name(filename, version, db, user_id=current_user.id)
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
+
+    # Explicit ownership check as second safety layer
+    _assert_ownership(record, current_user)
 
     try:
         result = download_file(record.file_id, db)
@@ -129,6 +155,11 @@ def get_versions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    Version history is metadata only — no content returned.
+    Admin can view version history of all files for auditing.
+    Regular users see only their own.
+    """
     scoped_user_id = None if current_user.role == "admin" else current_user.id
     versions = list_file_versions(filename, db, user_id=scoped_user_id)
     if not versions:
@@ -145,6 +176,7 @@ def get_versions(
                 "status": v.status,
                 "is_compressed": bool(v.is_compressed),
                 "merkle_root": v.merkle_root,
+                "owner_id": v.user_id,
                 "created_at": str(v.created_at),
             }
             for v in versions
@@ -161,12 +193,11 @@ def download(
     record = db.query(FileRecord).filter(FileRecord.file_id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
-    _assert_ownership(record, current_user)
+    _assert_ownership(record, current_user)       # content — no admin bypass
 
     try:
         result = download_file(file_id, db)
     except ValueError as e:
-        # Merkle root mismatch — file is tampered/corrupted
         raise HTTPException(status_code=409, detail=str(e))
 
     if not result:
@@ -189,7 +220,7 @@ def file_info(
     record = db.query(FileRecord).filter(FileRecord.file_id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
-    _assert_ownership(record, current_user)
+    _assert_read_access(record, current_user)     # metadata — admin can view all
 
     chunks = (
         db.query(Chunk)
@@ -224,7 +255,6 @@ def file_info(
     }
 
 
-# ── NEW: Merkle Proof Endpoint ─────────────────────────────────────────────
 @router.get("/{file_id}/merkle-proof/{chunk_index}")
 def merkle_proof(
     file_id: str,
@@ -232,23 +262,10 @@ def merkle_proof(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Returns a cryptographic Merkle proof for a specific chunk.
-
-    Proves that chunk_index is authentic and part of the original file
-    without needing to download any other chunk.
-
-    How to verify independently:
-      1. Start with chunk_hash
-      2. For each proof_step:
-         - If position="right": new_hash = SHA256(current + step.hash)
-         - If position="left":  new_hash = SHA256(step.hash + current)
-      3. Final result must equal merkle_root
-    """
     record = db.query(FileRecord).filter(FileRecord.file_id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
-    _assert_ownership(record, current_user)
+    _assert_read_access(record, current_user)     # metadata — admin can view all
 
     if not record.merkle_root:
         raise HTTPException(
@@ -260,7 +277,7 @@ def merkle_proof(
     if not proof:
         raise HTTPException(
             status_code=404,
-            detail=f"chunk_index {chunk_index} does not exist in this file (total chunks: {record.total_chunks})",
+            detail=f"chunk_index {chunk_index} does not exist (total chunks: {record.total_chunks})",
         )
 
     return proof
@@ -275,7 +292,7 @@ def verify_file_integrity(
     record = db.query(FileRecord).filter(FileRecord.file_id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
-    _assert_ownership(record, current_user)
+    _assert_read_access(record, current_user)     # metadata — admin can view all
 
     chunks = db.query(Chunk).filter(Chunk.file_id == file_id).all()
     results = []
@@ -320,7 +337,7 @@ def delete_file_endpoint(
     record = db.query(FileRecord).filter(FileRecord.file_id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
-    _assert_ownership(record, current_user)
+    _assert_ownership(record, current_user)       # content — no admin bypass
 
     result = delete_file(file_id, db)
     if not result:
