@@ -165,31 +165,27 @@
 }
 
 /* ==========================================================
-   UPLOAD OVERLAY — centered initially, bottom-left after upload
+   UPLOAD CONTENT — Two-column layout (upload + file manager)
    ========================================================== */
-.upload-overlay {
+.upload-content {
     position: absolute;
     inset: 0;
     z-index: 20;
     display: flex;
-    align-items: center;
-    justify-content: center;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0;
+    padding: 70px 16px 24px;
     pointer-events: none;
-    transition: all 1.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.upload-overlay--bottom-left {
-    align-items: flex-end;
-    justify-content: flex-start;
-    padding: 24px;
 }
 
 /* ---------- Glass Card ---------- */
 .upload-glass-card {
     pointer-events: auto;
-    width: 480px;
-    max-width: 92vw;
-    background: rgba(8, 12, 28, 0.55);
+    width: 380px;
+    max-width: 32vw;
+    flex-shrink: 0;
+    background: rgba(8, 12, 28, 0.6);
     backdrop-filter: blur(28px) saturate(1.3);
     -webkit-backdrop-filter: blur(28px) saturate(1.3);
     border: 1px solid rgba(255, 255, 255, 0.06);
@@ -220,6 +216,7 @@
 
 .upload-glass-card--mini {
     width: 340px;
+    max-width: 340px;
     padding: 1.4rem 1.6rem;
     border-radius: 18px;
     text-align: left;
@@ -489,23 +486,417 @@
     box-shadow: 0 0 20px rgba(60, 120, 255, 0.1);
 }
 
+/* ==========================================================
+   USER FILES PANEL — glassmorphic file manager
+   ========================================================== */
+.user-files-panel {
+    pointer-events: auto;
+    width: 380px;
+    max-width: 32vw;
+    max-height: calc(100vh - 120px);
+    background: rgba(8, 12, 28, 0.6);
+    backdrop-filter: blur(28px) saturate(1.3);
+    -webkit-backdrop-filter: blur(28px) saturate(1.3);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 20px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow:
+        0 8px 60px rgba(0, 0, 0, 0.35),
+        0 0 40px rgba(60, 120, 255, 0.06),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    animation: glassAppear 1s 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ---- Header ---- */
+.ufp-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1rem 1.2rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    flex-shrink: 0;
+}
+
+.ufp-icon {
+    font-size: 1.1rem;
+}
+
+.ufp-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #e0eaff;
+    margin: 0;
+    letter-spacing: 0.02em;
+}
+
+.ufp-count {
+    margin-left: auto;
+    font-size: 0.68rem;
+    font-weight: 500;
+    color: rgba(100, 150, 255, 0.5);
+    background: rgba(60, 120, 255, 0.1);
+    padding: 0.15rem 0.55rem;
+    border-radius: 10px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.ufp-refresh {
+    font-size: 1rem;
+    background: none;
+    border: none;
+    color: rgba(100, 150, 255, 0.5);
+    cursor: pointer;
+    padding: 0.15rem 0.3rem;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.ufp-refresh:hover {
+    color: #88bbff;
+    background: rgba(60, 120, 255, 0.1);
+}
+
+/* ---- File List ---- */
+.ufp-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.6rem;
+}
+
+.ufp-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 2rem 1rem;
+    color: rgba(160, 180, 220, 0.4);
+    font-size: 0.8rem;
+    text-align: center;
+}
+
+.ufp-spinner {
+    width: 24px;
+    height: 24px;
+    border: 2px solid rgba(60, 120, 255, 0.15);
+    border-top-color: #4488ff;
+    border-radius: 50%;
+    animation: orbitSpin 0.8s linear infinite;
+}
+
+/* ---- File Item ---- */
+.ufp-file {
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+    padding: 0.7rem 0.8rem;
+    margin-bottom: 0.5rem;
+    transition: all 0.2s;
+}
+
+.ufp-file:hover {
+    background: rgba(60, 120, 255, 0.04);
+    border-color: rgba(60, 120, 255, 0.1);
+}
+
+.ufp-file-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.ufp-file-icon {
+    font-size: 0.9rem;
+    flex-shrink: 0;
+}
+
+.ufp-file-name {
+    flex: 1;
+    font-size: 0.8rem;
+    color: #c8d8f0;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ufp-status {
+    font-size: 0.58rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+
+.ufp-status--complete,
+.ufp-status--active {
+    background: rgba(68, 221, 136, 0.12);
+    color: #44dd88;
+}
+
+.ufp-status--degraded {
+    background: rgba(255, 170, 51, 0.12);
+    color: #ffaa33;
+}
+
+.ufp-status--failed {
+    background: rgba(255, 68, 68, 0.12);
+    color: #ff5555;
+}
+
+.ufp-file-size {
+    font-size: 0.68rem;
+    color: rgba(160, 180, 220, 0.4);
+    font-family: 'JetBrains Mono', monospace;
+    flex-shrink: 0;
+}
+
+/* ---- Action Buttons Row ---- */
+.ufp-actions {
+    display: flex;
+    gap: 0.35rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.ufp-btn {
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.68rem;
+    font-weight: 500;
+    padding: 0.25rem 0.6rem;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.ufp-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.ufp-btn--download {
+    background: rgba(60, 120, 255, 0.1);
+    color: #88aadd;
+    border-color: rgba(60, 120, 255, 0.15);
+}
+
+.ufp-btn--download:hover:not(:disabled) {
+    background: rgba(60, 120, 255, 0.2);
+    color: #aaccff;
+}
+
+.ufp-btn--verify {
+    background: rgba(68, 221, 136, 0.08);
+    color: #44dd88;
+    border-color: rgba(68, 221, 136, 0.15);
+}
+
+.ufp-btn--verify:hover:not(:disabled) {
+    background: rgba(68, 221, 136, 0.18);
+    color: #66eebb;
+}
+
+.ufp-btn--info {
+    background: rgba(100, 160, 255, 0.08);
+    color: rgba(140, 180, 230, 0.7);
+    border-color: rgba(100, 160, 255, 0.12);
+}
+
+.ufp-btn--info:hover:not(:disabled) {
+    background: rgba(100, 160, 255, 0.16);
+    color: #aaccff;
+}
+
+.ufp-btn--delete {
+    background: rgba(255, 68, 68, 0.08);
+    color: #ff6666;
+    border-color: rgba(255, 68, 68, 0.15);
+}
+
+.ufp-btn--delete:hover:not(:disabled) {
+    background: rgba(255, 68, 68, 0.2);
+    color: #ff8888;
+}
+
+/* ---- Info Expand ---- */
+.ufp-info-expand {
+    background: rgba(10, 18, 40, 0.5);
+    border: 1px solid rgba(60, 120, 255, 0.08);
+    border-radius: 8px;
+    padding: 0.6rem 0.7rem;
+    margin-top: 0.5rem;
+    font-size: 0.7rem;
+    animation: resultFade 0.25s ease both;
+}
+
+.ufp-info-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.12rem 0;
+    color: rgba(180, 200, 230, 0.7);
+}
+
+.ufp-info-row span:first-child {
+    color: rgba(140, 170, 220, 0.45);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+}
+
+.ufp-info-expand .mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem;
+}
+
+/* ---- Chunk Map ---- */
+.ufp-chunk-map {
+    margin-top: 0.4rem;
+    border-top: 1px solid rgba(60, 120, 255, 0.06);
+    padding-top: 0.35rem;
+}
+
+.ufp-chunk-title {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(100, 150, 255, 0.45);
+    margin-bottom: 0.25rem;
+}
+
+.ufp-chunk-row {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    padding: 0.08rem 0;
+    font-size: 0.65rem;
+    color: rgba(180, 200, 230, 0.6);
+}
+
+.ufp-badge-replica {
+    font-size: 0.55rem;
+    background: rgba(255, 170, 51, 0.18);
+    color: #ffaa33;
+    padding: 0.03rem 0.3rem;
+    border-radius: 3px;
+    font-weight: 600;
+}
+
+.ufp-chunk-more {
+    font-size: 0.62rem;
+    color: rgba(140, 170, 220, 0.35);
+    padding-top: 0.2rem;
+    text-align: center;
+}
+
+/* ---- Toast ---- */
+.upload-toast {
+    position: fixed;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    padding: 0.5rem 1.2rem;
+    border-radius: 10px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    font-family: 'Outfit', sans-serif;
+    backdrop-filter: blur(16px);
+    animation: toastSlide 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+    pointer-events: none;
+}
+
+@keyframes toastSlide {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-12px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+.upload-toast--success {
+    background: rgba(68, 221, 136, 0.12);
+    border: 1px solid rgba(68, 221, 136, 0.25);
+    color: #44dd88;
+}
+
+.upload-toast--error {
+    background: rgba(255, 68, 68, 0.12);
+    border: 1px solid rgba(255, 68, 68, 0.25);
+    color: #ff6666;
+}
+
+.upload-toast--info {
+    background: rgba(60, 120, 255, 0.12);
+    border: 1px solid rgba(60, 120, 255, 0.25);
+    color: #6699ff;
+}
+
+/* ---- Scrollbar ---- */
+.ufp-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.ufp-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.ufp-list::-webkit-scrollbar-thumb {
+    background: rgba(60, 120, 255, 0.15);
+    border-radius: 2px;
+}
+
+.ufp-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(60, 120, 255, 0.3);
+}
+
 /* ---------- Responsive ---------- */
-@media (max-width: 600px) {
+@media (max-width: 900px) {
+    .upload-content {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 70px 16px 16px;
+        overflow-y: auto;
+    }
+
     .upload-glass-card {
+        width: 100%;
+        max-width: 100%;
         padding: 2rem 1.5rem;
         border-radius: 18px;
+    }
+
+    .user-files-panel {
+        width: 100%;
+        max-width: 100%;
+        max-height: 50vh;
     }
 
     .glass-title {
         font-size: 1.35rem;
     }
+}
 
-    .upload-overlay--bottom-left {
-        padding: 16px;
+@media (max-width: 600px) {
+    .upload-content {
+        padding: 60px 12px 12px;
     }
 
     .upload-glass-card--mini {
         width: 100%;
         max-width: 100%;
+    }
+
+    .ufp-actions {
+        flex-direction: column;
     }
 }

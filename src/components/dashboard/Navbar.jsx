@@ -1,16 +1,20 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { getSystemHealth, clearCache } from '../../services/api'
 import { useSystemLogs } from '../../context/SystemLogsContext'
+import { useAuth } from '../../context/AuthContext'
 
 /**
  * Navbar — Futuristic top bar with live system stats from /system/health.
- * Polls every 10s.  Includes "Clear Cache" button.
+ * Polls every 10s.  Includes home button and user info.
  */
 export default function Navbar() {
     const [health, setHealth] = useState(null)
     const [loading, setLoading] = useState(true)
     const [clearing, setClearing] = useState(false)
     const { addLog } = useSystemLogs()
+    const { user } = useAuth()
+    const navigate = useNavigate()
 
     const fetchHealth = useCallback(async () => {
         try {
@@ -49,13 +53,24 @@ export default function Navbar() {
     const healthPct =
         totalNodes > 0 ? Math.round((onlineCount / totalNodes) * 100) : 0
 
+    const roleClass = user?.role === 'admin' ? 'auth-role-badge--admin' : 'auth-role-badge--user'
+
     return (
         <nav className="dash-navbar">
+            {/* Left: Brand + Home */}
             <div className="dash-nav-brand">
                 <span className="dash-nav-icon">◈</span>
                 <span className="dash-nav-title">COSMOS <span className="nav-accent">DFS</span></span>
+                <button
+                    className="nav-home-btn"
+                    onClick={() => navigate('/')}
+                    title="Go to Home"
+                >
+                    🏠
+                </button>
             </div>
 
+            {/* Center: Stats row */}
             <div className="dash-nav-stats">
                 {loading ? (
                     <>
@@ -80,7 +95,10 @@ export default function Navbar() {
                         <StatBadge label="Cache" value={String(health?.cache_size ?? 0)} />
                     </>
                 )}
+            </div>
 
+            {/* Right: Cache button + User info */}
+            <div className="dash-nav-right">
                 <button
                     className="btn btn-sm btn-secondary"
                     onClick={handleClearCache}
@@ -89,6 +107,13 @@ export default function Navbar() {
                 >
                     {clearing ? '⟳' : '🗑'} Cache
                 </button>
+
+                {user && (
+                    <div className="nav-user-badge">
+                        <span className="nav-username">{user.username}</span>
+                        <span className={`auth-role-badge ${roleClass}`}>{user.role}</span>
+                    </div>
+                )}
             </div>
         </nav>
     )

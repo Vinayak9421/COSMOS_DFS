@@ -1,24 +1,127 @@
 /**
  * api.js — Reusable API service layer for COSMEON FS-LITE backend.
  * All endpoints target the FastAPI backend at localhost:8000.
+ * Includes JWT auth, timeout, defensive parsing, and AbortController support.
  */
 
 const API_BASE = 'http://localhost:8000/api/v1'
+const REQUEST_TIMEOUT_MS = 15000
+const DOWNLOAD_TIMEOUT_MS = 120000 // 2 min for file downloads (reconstruction can be slow)
+
+/** Token getter — wired up by AuthContext on mount */
+let _getToken = () => null
+
+export function setTokenGetter(fn) {
+    _getToken = fn
+}
 
 /* ────────────────── Helpers ────────────────── */
 
-async function request(path, options = {}) {
-    const res = await fetch(`${API_BASE}${path}`, options)
-    if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.detail || `Request failed: ${res.status}`)
+function buildHeaders(extra = {}) {
+    const headers = { ...extra }
+    const token = _getToken()
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`
     }
-    return res
+    return headers
+}
+
+async function request(path, options = {}) {
+    const { timeout: customTimeout, ...fetchOptions } = options
+    const controller = new AbortController()
+    const timeout = customTimeout || REQUEST_TIMEOUT_MS
+    const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+    try {
+        const res = await fetch(`${API_BASE}${path}`, {
+            ...fetchOptions,
+            signal: fetchOptions.signal || controller.signal,
+            headers: {
+                ...buildHeaders(),
+                ...(fetchOptions.headers || {}),
+            },
+        })
+
+        clearTimeout(timeoutId)
+
+        if (!res.ok) {
+            let detail = `Request failed: ${res.status}`
+            try {
+                const body = await res.json()
+                if (body && body.detail) detail = body.detail
+            } catch { /* response body wasn't JSON */ }
+            const err = new Error(detail)
+            err.status = res.status
+            throw err
+        }
+        return res
+    } catch (err) {
+        clearTimeout(timeoutId)
+        if (err.name === 'AbortError') {
+            throw new Error('Request timed out — backend may be unreachable')
+        }
+        throw err
+    }
 }
 
 async function json(path, options) {
     const res = await request(path, options)
+    try {
+        return await res.json()
+    } catch {
+        return {}
+    }
+}
+
+/* ────────────────── Auth ────────────────── */
+
+/** POST /auth/login — OAuth2 form-encoded login */
+export async function login(username, password) {
+    const body = new URLSearchParams()
+    body.append('username', username)
+    body.append('password', password)
+
+    const res = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+    })
+
+    if (!res.ok) {
+        let detail = 'Login failed'
+        try {
+            const data = await res.json()
+            if (data && data.detail) detail = data.detail
+        } catch { /* no JSON body */ }
+        throw new Error(detail)
+    }
+
     return res.json()
+}
+
+/** POST /auth/register — JSON body */
+export async function register(username, email, password) {
+    const res = await fetch(`${API_BASE}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, email, password }),
+    })
+
+    if (!res.ok) {
+        let detail = 'Registration failed'
+        try {
+            const data = await res.json()
+            if (data && data.detail) detail = data.detail
+        } catch { /* no JSON body */ }
+        throw new Error(detail)
+    }
+
+    return res.json()
+}
+
+/** GET /auth/me — returns current user profile */
+export async function getMe() {
+    return json('/auth/me')
 }
 
 /* ────────────────── Files ────────────────── */
@@ -31,8 +134,8 @@ export async function listFiles() {
 /** POST /files/upload (multipart) → { success, uploaded, failed } */
 export async function uploadFile(file) {
     const form = new FormData()
-    // Backend expects field name 'files' (List[UploadFile])
     form.append('files', file)
+    // Don't set Content-Type — browser sets it with boundary for multipart
     return json('/files/upload', { method: 'POST', body: form })
 }
 
@@ -56,8 +159,11 @@ export async function getFileVersions(filename) {
 /** GET /files/by-name/{filename}?version=N → Blob download */
 export async function downloadFileByName(filename, version = null) {
     const qs = version != null ? `?version=${version}` : ''
-    const res = await request(`/files/by-name/${encodeURIComponent(filename)}${qs}`)
+    const res = await request(`/files/by-name/${encodeURIComponent(filename)}${qs}`, {
+        timeout: DOWNLOAD_TIMEOUT_MS,
+    })
     const blob = await res.blob()
+    if (blob.size === 0) throw new Error('Empty file received from server')
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -70,8 +176,11 @@ export async function downloadFileByName(filename, version = null) {
 
 /** GET /files/download/{file_id} → Blob download */
 export async function downloadFile(fileId, originalName) {
-    const res = await request(`/files/download/${fileId}`)
+    const res = await request(`/files/download/${fileId}`, {
+        timeout: DOWNLOAD_TIMEOUT_MS,
+    })
     const blob = await res.blob()
+    if (blob.size === 0) throw new Error('Empty file received from server')
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url

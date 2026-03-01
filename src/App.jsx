@@ -1,9 +1,13 @@
-import { useCallback } from 'react'
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom'
+import { useCallback, useState } from 'react'
+import { BrowserRouter, Routes, Route, useNavigate, Navigate } from 'react-router-dom'
+import { AuthProvider, useAuth } from './context/AuthContext'
 import SpaceScene from './components/SpaceScene'
 import Dashboard from './components/Dashboard'
 import UploadExplorer from './components/UploadExplorer'
+import AuthPage from './components/AuthPage'
+import ProfilePanel from './components/ProfilePanel'
 import './styles.css'
+import './auth.css'
 
 const FEATURES = [
   { icon: '🚀', title: 'Distributed File Chunking', desc: 'Files are split into smaller chunks for efficient and scalable storage.' },
@@ -16,43 +20,126 @@ const FEATURES = [
 ]
 
 /**
- * HomeNavbar — Top bar matching dashboard aesthetic, without stats.
+ * ProtectedRoute — redirects to /login if not authenticated.
  */
-function HomeNavbar({ onLaunch }) {
+function ProtectedRoute({ children }) {
+  const { isAuthenticated, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div style={{
+        width: '100%',
+        height: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#050510',
+        color: 'rgba(180,210,255,0.6)',
+        fontFamily: "'Outfit', sans-serif",
+        fontSize: '1rem',
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            width: 32, height: 32, margin: '0 auto 1rem',
+            border: '2px solid rgba(60,120,255,0.2)',
+            borderTopColor: '#4488ff',
+            borderRadius: '50%',
+            animation: 'authSpin 0.7s linear infinite',
+          }} />
+          Initializing…
+        </div>
+      </div>
+    )
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+
+  return children
+}
+
+/**
+ * AdminRoute — only allows admin users, redirects others to home.
+ */
+function AdminRoute({ children }) {
+  const { user, isAuthenticated, loading } = useAuth()
+
+  if (loading) {
+    return (
+      <div style={{
+        width: '100%', height: '100vh',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: '#050510', color: 'rgba(180,210,255,0.6)',
+        fontFamily: "'Outfit', sans-serif", fontSize: '1rem',
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            width: 32, height: 32, margin: '0 auto 1rem',
+            border: '2px solid rgba(60,120,255,0.2)',
+            borderTopColor: '#4488ff', borderRadius: '50%',
+            animation: 'authSpin 0.7s linear infinite',
+          }} />
+          Initializing…
+        </div>
+      </div>
+    )
+  }
+
+  if (!isAuthenticated) return <Navigate to="/login" replace />
+  if (user?.role !== 'admin') return <Navigate to="/" replace />
+
+  return children
+}
+
+/**
+ * HomeNavbar — Top bar with profile button (if authenticated) or sign-in button.
+ */
+function HomeNavbar({ onProfileOpen }) {
+  const navigate = useNavigate()
+  const { isAuthenticated, user } = useAuth()
+
   return (
     <nav className="home-navbar">
       <div className="dash-nav-brand">
         <span className="dash-nav-icon">◈</span>
         <span className="dash-nav-title">COSMOS <span className="nav-accent">DFS</span></span>
       </div>
-      <button className="hero-cta hero-cta--nav" onClick={onLaunch}>
-        Launch Dashboard
-      </button>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        {isAuthenticated ? (
+          <button className="profile-nav-btn" onClick={onProfileOpen}>
+            <span className="profile-nav-avatar">{(user?.username || '?')[0]}</span>
+            {user?.username}
+          </button>
+        ) : (
+          <button className="hero-cta hero-cta--nav" onClick={() => navigate('/login')}>
+            Sign In
+          </button>
+        )}
+      </div>
     </nav>
   )
 }
 
 /**
  * HomePage — Cosmic hero landing page with scrollable features section.
- * CTA navigates to /dashboard.
+ * Shows profile panel (slide-out) when user clicks their avatar.
  */
 function HomePage() {
   const navigate = useNavigate()
+  const { isAuthenticated } = useAuth()
+  const [profileOpen, setProfileOpen] = useState(false)
 
   const handleLaunch = useCallback(() => {
-    navigate('/dashboard')
-  }, [navigate])
+    navigate(isAuthenticated ? '/upload' : '/login')
+  }, [navigate, isAuthenticated])
 
   return (
     <div className="home-page">
-      {/* Navbar — fixed at top */}
-      <HomeNavbar onLaunch={handleLaunch} />
+      <HomeNavbar onProfileOpen={() => setProfileOpen(true)} />
 
-      {/* Scrollable content layer */}
       <div className="home-scroll">
-        {/* Hero — full viewport, contains the 3D scene + planet */}
         <section className="hero-section">
-          {/* 3D scene confined to hero only */}
           <SpaceScene onPlanetClick={handleLaunch} />
 
           <div className="hero-overlay">
@@ -62,12 +149,16 @@ function HomePage() {
             <p className="hero-tagline">
               A journey beyond the stars — built for the future.
             </p>
-            <button className="hero-cta" onClick={handleLaunch}>
-              Launch Dashboard
-            </button>
-            <button className="hero-cta hero-cta--checkout" onClick={() => navigate('/upload')}>
-              Check out →
-            </button>
+            <div style={{ display: 'flex', gap: '0.6rem', pointerEvents: 'auto' }}>
+              <button className="hero-cta" onClick={handleLaunch}>
+                {isAuthenticated ? 'Upload Files' : 'Get Started'}
+              </button>
+              {isAuthenticated && (
+                <button className="hero-cta hero-cta--checkout" onClick={() => setProfileOpen(true)}>
+                  My Profile →
+                </button>
+              )}
+            </div>
           </div>
           <div className="scroll-hint">
             <span className="scroll-arrow">↓</span>
@@ -75,7 +166,6 @@ function HomePage() {
           </div>
         </section>
 
-        {/* Features section */}
         <section className="features-section">
           <h2 className="features-heading">
             Powerful <span className="accent">Features</span>
@@ -94,23 +184,29 @@ function HomePage() {
           </div>
         </section>
       </div>
+
+      {/* Profile slide-out panel */}
+      {isAuthenticated && (
+        <ProfilePanel open={profileOpen} onClose={() => setProfileOpen(false)} />
+      )}
     </div>
   )
 }
 
 /**
- * App — Root component with routing.
- * /          → Cosmic hero landing
- * /dashboard → Distributed storage dashboard
+ * App — Root component with routing and auth.
  */
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/upload" element={<UploadExplorer />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-      </Routes>
-    </BrowserRouter>
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/login" element={<AuthPage />} />
+          <Route path="/upload" element={<ProtectedRoute><UploadExplorer /></ProtectedRoute>} />
+          <Route path="/dashboard" element={<AdminRoute><Dashboard /></AdminRoute>} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   )
 }

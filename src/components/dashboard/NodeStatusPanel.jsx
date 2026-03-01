@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useNodes } from '../../context/NodesContext'
 import { useSystemLogs } from '../../context/SystemLogsContext'
+import { useAuth } from '../../context/AuthContext'
 import { getNodeChunks } from '../../services/api'
 
 /**
@@ -11,6 +12,8 @@ import { getNodeChunks } from '../../services/api'
 export default function NodeStatusPanel() {
     const { nodes, loading, killNode, recoverNode, maintenanceNode, activateNode } = useNodes()
     const { addLog } = useSystemLogs()
+    const { user } = useAuth()
+    const isAdmin = user?.role === 'admin'
     const [actionLoading, setActionLoading] = useState({})
     const [expandedChunks, setExpandedChunks] = useState(null) // { nodeId, chunks }
 
@@ -193,6 +196,22 @@ export default function NodeStatusPanel() {
                     </div>
                     {expandedChunks.chunks.length === 0 ? (
                         <div className="empty-text">No chunks</div>
+                    ) : isAdmin ? (
+                        /* Admin sees summary only — no file_id details */
+                        <div className="chunk-summary">
+                            <div className="info-row">
+                                <span>Total Chunks:</span>
+                                <span>{expandedChunks.chunks.length}</span>
+                            </div>
+                            <div className="info-row">
+                                <span>Total Size:</span>
+                                <span>{formatBytes(expandedChunks.chunks.reduce((s, c) => s + (c.size_bytes || 0), 0))}</span>
+                            </div>
+                            <div className="info-row">
+                                <span>Replicas:</span>
+                                <span>{expandedChunks.chunks.filter(c => c.is_replica).length}</span>
+                            </div>
+                        </div>
                     ) : (
                         expandedChunks.chunks.map((c) => (
                             <div key={c.chunk_id} className="chunk-map-row">
