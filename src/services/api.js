@@ -99,12 +99,18 @@ export async function login(username, password) {
     return res.json()
 }
 
-/** POST /auth/register — JSON body */
-export async function register(username, email, password) {
+/** POST /auth/register — JSON body (now includes security Q&A) */
+export async function register(username, email, password, securityQuestion, securityAnswer) {
     const res = await fetch(`${API_BASE}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, email, password }),
+        body: JSON.stringify({
+            username,
+            email,
+            password,
+            security_question: securityQuestion,
+            security_answer: securityAnswer,
+        }),
     })
 
     if (!res.ok) {
@@ -122,6 +128,35 @@ export async function register(username, email, password) {
 /** GET /auth/me — returns current user profile */
 export async function getMe() {
     return json('/auth/me')
+}
+
+/* ────────────────── Security Q&A (Forgot Password) ────────────────── */
+
+/** GET /auth/security-question/{username} → { username, question } */
+export async function getSecurityQuestion(username) {
+    return json(`/auth/security-question/${encodeURIComponent(username)}`)
+}
+
+/** POST /auth/verify-security → { verified, reset_token } */
+export async function verifySecurityAnswer(username, answer) {
+    return json('/auth/verify-security', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, answer }),
+    })
+}
+
+/** POST /auth/reset-password → { success, message } */
+export async function resetPassword(username, resetToken, newPassword) {
+    return json('/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            username,
+            reset_token: resetToken,
+            new_password: newPassword,
+        }),
+    })
 }
 
 /* ────────────────── Files ────────────────── */

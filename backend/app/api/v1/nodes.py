@@ -17,12 +17,15 @@ def list_nodes(
     current_user=Depends(get_current_user),     # any logged-in user can view
 ):
     nodes = db.query(Node).all()
+    is_admin = current_user.role == "admin"
+
     return {
         "nodes": [
             {
                 "id": n.id,
                 "status": n.status,
-                "storage_path": n.storage_path,
+                # Only expose storage_path to admins — prevents server path disclosure
+                **({"storage_path": n.storage_path} if is_admin else {}),
                 "capacity_bytes": n.capacity_bytes,
                 "used_bytes": n.used_bytes,
                 "chunk_count": n.chunk_count,
@@ -67,7 +70,6 @@ def kill_node(
     if hard and os.path.isdir(node.storage_path):
         os.rename(node.storage_path, node.storage_path + "_FAILED")
 
-    # Pass hard flag — soft kill preserves metadata, hard kill migrates it
     rebalance_result = rebalance_node(node_id, db, hard=hard)
 
     return {
@@ -80,7 +82,7 @@ def kill_node(
 def recover_node(
     node_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(require_admin),        # admin only
+    current_user=Depends(require_admin),
 ):
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:
@@ -106,7 +108,7 @@ def recover_node(
 def set_maintenance(
     node_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(require_admin),        # admin only
+    current_user=Depends(require_admin),
 ):
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:
@@ -129,7 +131,7 @@ def set_maintenance(
 def activate_node(
     node_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(require_admin),        # admin only
+    current_user=Depends(require_admin),
 ):
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:
@@ -150,7 +152,7 @@ def activate_node(
 def get_node_chunks(
     node_id: str,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),     # any logged-in user can view
+    current_user=Depends(get_current_user),
 ):
     node = db.query(Node).filter(Node.id == node_id).first()
     if not node:

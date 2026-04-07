@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.models.chunk import Chunk
 from app.models.node import Node
-from app.core.integrity import verify_chunk, read_chunk_data
+from app.core.integrity import verify_chunk
 from app.core.cache import chunk_cache
+from app.core.storage_backend import storage
 
 
 def reconstruct_file(
@@ -94,21 +95,26 @@ def _fetch_chunk_from_info(info: dict) -> Optional[bytes]:
 
     # 2. Primary node (ONLINE or MAINTENANCE are both readable)
     if info["primary_node_status"] in ("ONLINE", "MAINTENANCE"):
-        path = os.path.join(info["primary_node_path"], info["chunk_id"])
-        if verify_chunk(path, info["checksum"]):
-            data = read_chunk_data(path)
+        node_path = info["primary_node_path"]
+        chunk_id = info["chunk_id"]
+        # Use storage backend abstraction (local disk or S3)
+        chunk_path = os.path.join(node_path, chunk_id)
+        if verify_chunk(chunk_path, info["checksum"]):
+            data = storage.read_chunk(node_path, chunk_id)
             if data:
-                chunk_cache.put(info["chunk_id"], data)
+                chunk_cache.put(chunk_id, data)
                 return data
 
     # 3. Fallback to replicas
     for replica in info["replicas"]:
         if replica["node_status"] in ("ONLINE", "MAINTENANCE"):
-            path = os.path.join(replica["node_path"], replica["chunk_id"])
-            if verify_chunk(path, replica["checksum"]):
-                data = read_chunk_data(path)
+            node_path = replica["node_path"]
+            chunk_id = replica["chunk_id"]
+            chunk_path = os.path.join(node_path, chunk_id)
+            if verify_chunk(chunk_path, replica["checksum"]):
+                data = storage.read_chunk(node_path, chunk_id)
                 if data:
-                    chunk_cache.put(info["chunk_id"], data)
+                    chunk_cache.put(chunk_id, data)
                     return data
 
     return None

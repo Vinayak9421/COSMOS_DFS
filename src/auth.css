@@ -845,3 +845,104 @@
     background: rgba(60, 120, 255, 0.15);
     border-radius: 4px;
 }
+
+/* ============================================================
+   Admin Login Tab — Gold/amber accent styling
+   ============================================================ */
+
+/* Admin tab button in tab bar */
+.auth-tab--admin-btn {
+    font-size: 0.82rem;
+}
+
+.auth-tab--admin-active {
+    background: linear-gradient(135deg, rgba(200, 140, 30, 0.45), rgba(255, 180, 50, 0.25)) !important;
+    box-shadow: 0 0 16px rgba(255, 170, 50, 0.18) !important;
+    color: #ffe8b0 !important;
+}
+
+/* Admin badge row below tabs */
+.auth-admin-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    margin-bottom: 1rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #ffcc66;
+    background: rgba(255, 170, 50, 0.06);
+    border: 1px solid rgba(255, 170, 50, 0.12);
+    border-radius: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.auth-admin-shield {
+    font-size: 1.1rem;
+}
+
+/* Card border glow when admin tab is active */
+.auth-card--admin {
+    border-color: rgba(255, 170, 50, 0.25);
+    box-shadow:
+        0 0 40px rgba(255, 170, 50, 0.06),
+        0 16px 64px rgba(0, 0, 0, 0.4),
+        inset 0 0 30px rgba(255, 170, 50, 0.02);
+}
+
+/* Admin-style submit button */
+.auth-submit--admin {
+    background: linear-gradient(135deg, #b87a00, #e6a520) !important;
+    box-shadow:
+        0 0 20px rgba(255, 170, 50, 0.25),
+        0 0 50px rgba(255, 170, 50, 0.08) !important;
+}
+
+.auth-submit--admin:hover:not(:disabled) {
+    box-shadow:
+        0 0 30px rgba(255, 170, 50, 0.45),
+        0 0 70px rgba(255, 170, 50, 0.15) !important;
+}
+
+/* ============================================================
+   Password Strength Meter
+   ============================================================ */
+
+.auth-strength-bar {
+    position: relative;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 2px;
+    margin: -0.3rem 0 0.5rem;
+    overflow: hidden;
+}
+
+.auth-strength-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.4s ease, background 0.4s ease;
+}
+
+.auth-strength-label {
+    position: absolute;
+    right: 0;
+    top: 8px;
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    transition: color 0.3s ease;
+}
+
+/* ---------- COMPLETE file status ---------- */
+.profile-file-status--complete {
+    color: #66eebb;
+    background: rgba(60, 220, 160, 0.1);
+}
+
+/* ---------- Star drift animation ---------- */
+@keyframes starDrift {
+    from { background-position: 0 0; }
+    to { background-position: 200px 200px; }
+}

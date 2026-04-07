@@ -64,10 +64,10 @@ export function AuthProvider({ children }) {
         }
     }, [])
 
-    const register = useCallback(async (username, email, password) => {
+    const register = useCallback(async (username, email, password, securityQuestion, securityAnswer) => {
         setAuthError(null)
         try {
-            const data = await apiRegister(username, email, password)
+            const data = await apiRegister(username, email, password, securityQuestion, securityAnswer)
             return data
         } catch (err) {
             setAuthError(err.message)

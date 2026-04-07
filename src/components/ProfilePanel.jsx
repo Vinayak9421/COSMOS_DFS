@@ -6,7 +6,7 @@ import '../auth.css'
 
 /**
  * ProfilePanel — Slide-out panel showing user details, uploaded files,
- * and for admin: all users' files in a table.
+ * and for admin: all users' files with owner USERNAME (not UUID).
  */
 export default function ProfilePanel({ open, onClose }) {
     const { user, logout } = useAuth()
@@ -161,7 +161,7 @@ export default function ProfilePanel({ open, onClose }) {
                             </div>
                         )}
 
-                        {/* Admin: All Users' Files */}
+                        {/* Admin: All Users' Files — now shows usernames! */}
                         {isAdmin && (
                             <div className="profile-admin-section">
                                 <div className="profile-section-title">All Users' Files</div>
@@ -187,7 +187,7 @@ export default function ProfilePanel({ open, onClose }) {
                                                         <td>{f.total_chunks}</td>
                                                         <td>
                                                             <span className="profile-owner-badge">
-                                                                {f.owner_id?.slice(0, 8)}…
+                                                                {f.owner_username || f.owner_id?.slice(0, 8) + '…'}
                                                             </span>
                                                         </td>
                                                         <td>

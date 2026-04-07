@@ -15,15 +15,16 @@ from app.core.distributor import get_online_nodes, distribute
 from app.core.reconstructor import reconstruct_file
 from app.core.cache import chunk_cache
 from app.core.merkle import compute_merkle_root, verify_proof, generate_proof
+from app.core.storage_backend import storage
 from app.config import settings
 
 _metadata_lock = asyncio.Lock()
 _io_executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="chunk_writer")
 
 
-def _write_chunk_to_disk(chunk_path: Path, data) -> None:
-    with open(chunk_path, "wb") as f:
-        f.write(data)
+def _write_chunk_to_storage(node_path: str, chunk_id: str, data: bytes) -> None:
+    """Write a single chunk via the storage backend abstraction."""
+    storage.write_chunk(node_path, chunk_id, data)
 
 
 async def _write_all_chunks_parallel(
@@ -34,8 +35,9 @@ async def _write_all_chunks_parallel(
     write_tasks = [
         loop.run_in_executor(
             _io_executor,
-            _write_chunk_to_disk,
-            Path(node_map[a["node_id"]].storage_path) / a["chunk_id"],
+            _write_chunk_to_storage,
+            node_map[a["node_id"]].storage_path,
+            a["chunk_id"],
             a["data"],
         )
         for a in assignments
@@ -50,11 +52,25 @@ async def upload_file(
     db: Session,
     user_id: str,
 ) -> dict:
+    # ── File size guard ───────────────────────────────────────────────────
+    max_bytes = settings.max_file_size_bytes
+    if len(file_data) > max_bytes:
+        raise ValueError(
+            f"File too large ({len(file_data) / 1024 / 1024:.1f} MB). "
+            f"Maximum allowed: {settings.MAX_FILE_SIZE_MB} MB."
+        )
+
+    # ── Input sanitization on filename ────────────────────────────────────
+    # Strip path traversal attempts and limit length
+    safe_name = Path(original_name).name  # removes any path components
+    if len(safe_name) > 255:
+        safe_name = safe_name[:255]
+    original_name = safe_name
+
     # ── Phase 1: Chunk + compute Merkle root ──────────────────────────────
     original_checksum, chunks, is_compressed = chunk_file(file_data)
 
     # Build Merkle root from primary chunk hashes, ordered by chunk_index
-    # Replicas share the same hash as their primary, so only unique indices needed
     unique_chunks_sorted = sorted(
         {c["chunk_index"]: c for c in chunks}.values(),
         key=lambda c: c["chunk_index"],
@@ -70,7 +86,7 @@ async def upload_file(
     assignments = distribute(chunks, nodes, replication_factor)
     node_map: Dict[str, Node] = {n.id: n for n in nodes}
 
-    # ── Phase 2: Parallel disk writes ──────────────────────────────────────
+    # ── Phase 2: Parallel writes via storage backend ──────────────────────
     await _write_all_chunks_parallel(assignments, node_map)
 
     # ── Phase 3: Metadata commit (locked) ─────────────────────────────────
@@ -138,11 +154,12 @@ async def upload_file(
 
         except Exception:
             db.rollback()
+            # Cleanup written chunks on failure
             for a in assignments:
                 node = node_map.get(a["node_id"])
                 if node:
                     try:
-                        (Path(node.storage_path) / a["chunk_id"]).unlink(missing_ok=True)
+                        storage.delete_chunk(node.storage_path, a["chunk_id"])
                     except Exception:
                         pass
             raise
@@ -176,9 +193,6 @@ def download_file(
         return None
 
     # ── Merkle integrity check on every download ──────────────────────────
-    # Recompute root from primary (non-replica) chunk checksums stored in DB
-    # and compare against the root stored at upload time.
-    # If even one chunk was tampered with or swapped, the root will not match.
     if record.merkle_root:
         primary_chunks = (
             db.query(Chunk)
@@ -204,11 +218,6 @@ def get_merkle_proof_for_chunk(
     chunk_index: int,
     db: Session,
 ) -> Optional[dict]:
-    """
-    Returns the Merkle proof for a specific chunk_index within a file.
-    Allows a client to verify a single chunk's authenticity without
-    downloading the entire file.
-    """
     record = db.query(FileRecord).filter(FileRecord.file_id == file_id).first()
     if not record or not record.merkle_root:
         return None
@@ -226,7 +235,6 @@ def get_merkle_proof_for_chunk(
     leaf_hashes = [c.checksum for c in primary_chunks]
     proof_steps = generate_proof(leaf_hashes, chunk_index)
 
-    # Self-verify the proof before returning it
     target_hash = leaf_hashes[chunk_index]
     is_valid = verify_proof(target_hash, proof_steps, record.merkle_root)
 
@@ -253,7 +261,7 @@ def delete_file(file_id: str, db: Session) -> Optional[dict]:
 
     chunks = db.query(Chunk).filter(Chunk.file_id == file_id).all()
 
-    deletion_targets: List[Tuple[Path, str, int, str]] = []
+    deletion_targets: List[Tuple[str, str, str, int]] = []  # (node_path, chunk_id, node_id, size)
     node_cache: dict = {}
 
     for chunk in chunks:
@@ -262,15 +270,15 @@ def delete_file(file_id: str, db: Session) -> Optional[dict]:
         node = node_cache[chunk.node_id]
         if node:
             deletion_targets.append((
-                Path(node.storage_path) / chunk.chunk_id,
+                node.storage_path,
+                chunk.chunk_id,
                 chunk.node_id,
                 chunk.size_bytes,
-                chunk.chunk_id,
             ))
 
     size_per_node: dict = {}
     count_per_node: dict = {}
-    for _, node_id, size_bytes, _ in deletion_targets:
+    for _, _, node_id, size_bytes in deletion_targets:
         size_per_node[node_id] = size_per_node.get(node_id, 0) + size_bytes
         count_per_node[node_id] = count_per_node.get(node_id, 0) + 1
 
@@ -287,15 +295,10 @@ def delete_file(file_id: str, db: Session) -> Optional[dict]:
     db.commit()
 
     deleted_physically = 0
-    for chunk_path, _, _, chunk_id in deletion_targets:
+    for node_path, chunk_id, _, _ in deletion_targets:
         chunk_cache.invalidate(chunk_id)
-        try:
-            chunk_path.unlink()
+        if storage.delete_chunk(node_path, chunk_id):
             deleted_physically += 1
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            print(f"Warning: Could not delete chunk at {chunk_path}: {e}")
 
     return {
         "file_id": file_id,
